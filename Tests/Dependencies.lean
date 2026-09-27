@@ -72,6 +72,46 @@ private def expectSelectionError (deps : RootDependencies) (package expected : S
 private def names (specs : Array DependencySpec) : String :=
   toString (specs.map (·.name))
 
+/-- ProofLibrary models a solution-only package whose Lake name differs from
+its module root, as lean-pool/LeanPool do. TauCeti keeps its existing policy. -/
+private def checkSolutionDependencies (root : System.FilePath) : IO Unit := do
+  IO.FS.createDirAll root
+  IO.FS.writeFile (root / "lakefile.toml") <|
+    rootLakefile ++ requireBlock "proof-library" "https://proof.example/library" "proof-pin"
+  writeModule root "Plain" "import Mathlib.Data.Nat.Basic\n"
+  writeModule root "WithTauCeti" "import TauCeti.GroupTheory.Classification\n"
+  writeModule root "WithHelper" "import Helper\n"
+  writeModule root "Helper" "import ProofLibrary.Basic\n"
+  IO.FS.writeFile (root / "solution-dependencies.json")
+    "[{\"name\":\"proof-library\",\"moduleRoots\":[\"ProofLibrary\"]}]"
+  let deps ← loadRootDependencies root
+  expectEq "solution dependency included without a statement import"
+    (names (← requiresFor root deps "Plain")) "#[proof-library, mathlib]"
+  expectEq "TauCeti remains available to statements; Mathlib stays last"
+    (names (← requiresFor root deps "WithTauCeti")) "#[TauCeti, proof-library, mathlib]"
+  expectSelectionError deps "ProofLibrary" "solution-only"
+  expectSelectionError deps "«ProofLibrary»" "solution-only"
+  match ← (requiresFor root deps "WithHelper").toBaseIO with
+  | .ok _ => throw <| IO.userError "transitive solution import was accepted"
+  | .error e =>
+      unless ((toString e).splitOn "solution-only").length > 1 do throw e
+  expectEq "module root prefix boundary"
+    (names (← IO.ofExcept (workspaceRequires deps #["ProofLibraryOther.Foo"])))
+    "#[proof-library, mathlib]"
+  let missing := { deps with solutions := #[{ name := "missing", moduleRoots := #["Missing"] }] }
+  expectSelectionError missing "Mathlib" "must name exactly one"
+  let unpinned := { deps with solutions := #[{ name := "Cli", moduleRoots := #["Cli"] }] }
+  expectSelectionError unpinned "Mathlib" "does not pin"
+  let invalid := { deps with solutions := #[{ name := "proof-library", moduleRoots := #[] }] }
+  expectSelectionError invalid "Mathlib" "non-empty moduleRoots"
+  IO.FS.writeFile (root / "solution-dependencies.json") "invalid JSON"
+  expectEq "legacy Mathlib loader is independent of solution policy"
+    (← loadRootMathlibDependency root).rev mathlibRev
+  match ← (loadRootDependencies root).toBaseIO with
+  | .ok _ => throw <| IO.userError "malformed solution policy was accepted"
+  | .error e =>
+      unless ((toString e).splitOn "solution-dependencies.json").length > 1 do throw e
+
 def main : IO Unit := do
   let root ← IO.FS.createTempDir
   try
@@ -119,28 +159,6 @@ def main : IO Unit := do
         (withChallengeDeps := false))
       (mathlibOnlyLakefile "plain")
 
-    -- Enable an unimported package for solutions, retaining root dependency order.
-    IO.FS.writeFile (root / "solution-dependencies.json")
-      "[{\"name\":\"TauCeti\",\"moduleRoots\":[\"TauCeti\"]}]"
-    let solutionDeps ← loadRootDependencies root
-    expectEq "solution dependency included without a statement import"
-      (names (← requiresFor root solutionDeps "LeanEval.Plain")) "#[TauCeti, mathlib]"
-    expectSelectionError solutionDeps "TauCeti" "solution-only"
-    expectSelectionError solutionDeps "«TauCeti»" "solution-only"
-    match ← (requiresFor root solutionDeps "LeanEval.Cfsg").toBaseIO with
-    | .ok _ => throw <| IO.userError "transitive solution import was accepted"
-    | .error e =>
-        unless ((toString e).splitOn "solution-only").length > 1 do throw e
-    expectEq "module root prefix boundary"
-      (names (← IO.ofExcept (workspaceRequires solutionDeps #["TauCetiOther.Foo"])))
-      "#[TauCeti, mathlib]"
-    let missing := { deps with solutions := #[{ name := "missing", moduleRoots := #["Missing"] }] }
-    expectSelectionError missing "Mathlib" "must name exactly one"
-    let unpinned := { deps with solutions := #[{ name := "Cli", moduleRoots := #["Cli"] }] }
-    expectSelectionError unpinned "Mathlib" "does not pin"
-    let invalid := { deps with solutions := #[{ name := "TauCeti", moduleRoots := #[] }] }
-    expectSelectionError invalid "Mathlib" "non-empty moduleRoots"
-
     -- Values are TOML-escaped; ordinary values are emitted verbatim.
     expectEq "plain TOML string" (tomlBasicString "https://x.org/a-b_c.git")
       "\"https://x.org/a-b_c.git\""
@@ -169,6 +187,7 @@ def main : IO Unit := do
     unless ((lakefileToml "a\"b" #[] (withChallengeDeps := false)).startsWith
         "name = \"a\\\"b\"\n") do
       throw <| IO.userError "workspace name is not TOML-escaped"
+    checkSolutionDependencies (root / "solution-only")
   finally
     IO.FS.removeDirAll root
   IO.println "dependency tests passed"

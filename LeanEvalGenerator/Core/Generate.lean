@@ -109,7 +109,8 @@ structure SolutionDependency where
 def loadSolutionDependencies (root : System.FilePath) : IO (Array SolutionDependency) := do
   let path := root / "solution-dependencies.json"
   if !(← path.pathExists) then return #[]
-  IO.ofExcept <| (Json.parse (← IO.FS.readFile path)).bind fromJson?
+  let parsed := (Json.parse (← IO.FS.readFile path)).bind fromJson?
+  IO.ofExcept <| parsed.mapError (fun err => s!"{path}: {err}")
 
 /-- Check external imports after following repository-local helpers. -/
 def checkSolutionImports (solutions : Array SolutionDependency) (imports : Array String) :
@@ -120,12 +121,14 @@ def checkSolutionImports (solutions : Array SolutionDependency) (imports : Array
     for imported in imports do
       if dep.moduleRoots.any (fun root =>
           (parseModuleName root).isPrefixOf (parseModuleName imported)) then
-        throw s!"Problem statements may not import solution-only module '{imported}' (package '{dep.name}')"
+        throw s!"Problem statements may not import solution-only module '{imported}' \
+          (package '{dep.name}')"
 
 /-- The dependencies a generated workspace may require, read from the root
 lakefile: the mandatory `mathlib` pin, plus every other root `[[require]]` in
 root lakefile order. An extra require is only emitted into a workspace whose
-problem imports one of its modules, or is explicitly enabled for solutions; see `workspaceRequires`. -/
+problem imports one of its modules, or is explicitly enabled for solutions;
+see `workspaceRequires`. -/
 structure RootDependencies where
   mathlib : DependencySpec
   extras : Array RootRequire := #[]
@@ -185,16 +188,17 @@ private def loadRootDependenciesCore (root : System.FilePath) (strictMathlib : B
   return {
     mathlib := { name := "mathlib", git := git, rev := rev }
     extras := rootRequires.filter (·.name != "mathlib")
-    solutions := ← loadSolutionDependencies root
   }
 
 /-- Read the root `lakefile.toml` for workspace generation: the single
 `mathlib` require, which must be a plain git require with non-empty `git` and
 `rev` and no other fields, and every other require as written. Other requires
 are not validated here; a problem that selects one fails if it cannot be
-reproduced (see `RootRequire.toSpec`). -/
-def loadRootDependencies (root : System.FilePath) : IO RootDependencies :=
-  loadRootDependenciesCore root (strictMathlib := true)
+reproduced (see `RootRequire.toSpec`). Also read the optional solution-only
+policy; the legacy Mathlib-only loader does not depend on that file. -/
+def loadRootDependencies (root : System.FilePath) : IO RootDependencies := do
+  return { (← loadRootDependenciesCore root (strictMathlib := true)) with
+    solutions := ← loadSolutionDependencies root }
 
 /-- The root `mathlib` pin. Unlike `loadRootDependencies`, this ignores
 fields beyond `name`, `git` and `rev`, as it always has. -/
@@ -1387,7 +1391,7 @@ no problem imports them. Explicit solution dependencies are also emitted, but
 their module roots are rejected in problem imports. Fails if a selected require
 cannot be reproduced.
 
-Known limitation: a package whose library root differs from its package name
+Known limitation for statement imports: a library root differing from its package name
 (say package `foo-bar` providing modules `FooBar.*`) is not matched. Its
 workspace then lacks the require, and the workspace build fails loudly on the
 missing import rather than silently changing the statement.

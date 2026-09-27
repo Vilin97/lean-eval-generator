@@ -115,22 +115,44 @@ def check_extra_dependencies() -> None:
                 assert lakefile.count("[[require]]") == 2, lakefile
             else:
                 assert lakefile == baseline, lakefile
-                original_files = json.loads(invoke(json.dumps(payload)).stdout)["files"]
-                payload["solutionDependencies"] = [
-                    {"name": "TauCeti", "moduleRoots": ["TauCeti"]}
-                ]
-                assert tauceti + mathlib in lakefile_for(payload)
-                updated_files = json.loads(invoke(json.dumps(payload)).stdout)["files"]
-                assert [f for f in updated_files if f["path"] != "lakefile.toml"] == [
-                    f for f in original_files if f["path"] != "lakefile.toml"
-                ]
-                payload["solutionDependencies"][0]["unexpected"] = True
-                assert_rejected(payload, "solution dependency contains an unknown field")
-            if module == "WithTauCeti":
-                payload["solutionDependencies"] = [
-                    {"name": "TauCeti", "moduleRoots": ["TauCeti"]}
-                ]
-                assert_rejected(payload, "solution-only")
+
+
+def check_solution_dependencies() -> None:
+    """ProofLibrary is available to proofs; it must not change the statement environment."""
+    with tempfile.TemporaryDirectory() as directory:
+        context = Path(directory)
+        fixture = problem()
+        content = fixture["moduleContent"]
+        hole = fixture["resolvedHoles"][0]
+        hole["declarationName"] = "fixture"
+        hole["endColumn"] = len(content.rstrip())
+        (context / "Fixture.lean").write_text(content, encoding="utf-8")
+        ilean = context / ".lake/build/lib/lean"
+        ilean.mkdir(parents=True)
+        (ilean / "Fixture.ilean").write_text('{"decls": {}}', encoding="utf-8")
+        payload = request_with(fixture)
+        payload["contextRoot"] = str(context)
+        payload["dependencies"] = [
+            {"name": "proof-library", "git": "https://proof.example/library", "rev": "proof-pin"}
+        ]
+        assert 'name = "proof-library"' not in lakefile_for(payload)
+        original_files = json.loads(invoke(json.dumps(payload)).stdout)["files"]
+        payload["solutionDependencies"] = [
+            {"name": "proof-library", "moduleRoots": ["ProofLibrary"]}
+        ]
+        lakefile = lakefile_for(payload)
+        assert lakefile.index('name = "proof-library"') < lakefile.index('name = "mathlib"')
+        updated_files = json.loads(invoke(json.dumps(payload)).stdout)["files"]
+        assert [f for f in updated_files if f["path"] != "lakefile.toml"] == [
+            f for f in original_files if f["path"] != "lakefile.toml"
+        ]
+        payload["solutionDependencies"][0]["unexpected"] = True
+        assert_rejected(payload, "solution dependency contains an unknown field")
+        del payload["solutionDependencies"][0]["unexpected"]
+        fixture["moduleContent"] = "import ProofLibrary.Basic\n" + content
+        (context / "Fixture.lean").write_text(fixture["moduleContent"], encoding="utf-8")
+        hole["startLine"] = hole["endLine"] = 2
+        assert_rejected(payload, "solution-only")
 
 
 def main() -> int:
@@ -232,6 +254,7 @@ def main() -> int:
         assert_rejected(request_with(invalid_id), "is invalid")
 
     check_extra_dependencies()
+    check_solution_dependencies()
 
     print("PASS schema errors stay off stdout and quoted source/ilean paths resolve")
     return 0

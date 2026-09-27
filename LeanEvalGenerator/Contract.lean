@@ -63,6 +63,8 @@ structure GenerateRequest where
   `LeanEvalGenerator.Core.workspaceRequires`). Omitting the field means no
   extra requires, which is how every earlier version 1 request behaves. -/
   dependencies : Option (Array DependencyPin) := none
+  /-- Packages included without statement imports; their module roots are
+  forbidden in statements. Names refer to pins in `dependencies`. -/
   solutionDependencies : Option (Array Core.SolutionDependency) := none
   templates : TemplateInputs
   problems : Array ProblemInput
@@ -241,8 +243,8 @@ private def ensureKnownFields (label : String) (allowed : Array String)
 
 private def validateJsonShape (value : Json) : Except String Unit := do
   ensureKnownFields "request" #[
-    "schemaVersion", "contextRoot", "leanToolchain", "mathlib", "dependencies", "solutionDependencies", "templates",
-    "problems"
+    "schemaVersion", "contextRoot", "leanToolchain", "mathlib", "dependencies",
+    "solutionDependencies", "templates", "problems"
   ] value
   let mathlib ← value.getObjVal? "mathlib"
   ensureKnownFields "mathlib" #["name", "git", "rev"] mathlib
