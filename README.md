@@ -55,3 +55,16 @@ transitive dependencies are not pinned in the workspace lakefile. A consumer
 that builds a generated workspace should install the root `lake-manifest.json`
 into it (as lean-eval's CI does) rather than running `lake update`, so that
 every package resolves to the same revision as in the root workspace.
+
+Solution-only packages can be enabled in the consumer's optional
+`solution-dependencies.json`, using names pinned in its root lakefile:
+
+```json
+[{"name": "proof-library", "moduleRoots": ["ProofLibrary"]}]
+```
+
+These packages are included in every workspace without adding statement imports.
+Generation rejects their module roots in statements, including imports through
+local helpers. Library consumers can use `checkSolutionImports` for earlier
+validation. JSON CLI requests use the same array in `solutionDependencies`, with
+the pins supplied in `dependencies`. Omitting the policy preserves existing output.

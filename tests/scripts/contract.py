@@ -115,6 +115,22 @@ def check_extra_dependencies() -> None:
                 assert lakefile.count("[[require]]") == 2, lakefile
             else:
                 assert lakefile == baseline, lakefile
+                original_files = json.loads(invoke(json.dumps(payload)).stdout)["files"]
+                payload["solutionDependencies"] = [
+                    {"name": "TauCeti", "moduleRoots": ["TauCeti"]}
+                ]
+                assert tauceti + mathlib in lakefile_for(payload)
+                updated_files = json.loads(invoke(json.dumps(payload)).stdout)["files"]
+                assert [f for f in updated_files if f["path"] != "lakefile.toml"] == [
+                    f for f in original_files if f["path"] != "lakefile.toml"
+                ]
+                payload["solutionDependencies"][0]["unexpected"] = True
+                assert_rejected(payload, "solution dependency contains an unknown field")
+            if module == "WithTauCeti":
+                payload["solutionDependencies"] = [
+                    {"name": "TauCeti", "moduleRoots": ["TauCeti"]}
+                ]
+                assert_rejected(payload, "solution-only")
 
 
 def main() -> int:

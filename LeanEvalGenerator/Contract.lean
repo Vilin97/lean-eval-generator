@@ -63,6 +63,7 @@ structure GenerateRequest where
   `LeanEvalGenerator.Core.workspaceRequires`). Omitting the field means no
   extra requires, which is how every earlier version 1 request behaves. -/
   dependencies : Option (Array DependencyPin) := none
+  solutionDependencies : Option (Array Core.SolutionDependency) := none
   templates : TemplateInputs
   problems : Array ProblemInput
   deriving FromJson
@@ -213,6 +214,7 @@ def render (request : GenerateRequest) : IO String := do
   let spec (pin : DependencyPin) : LeanEvalGenerator.Core.DependencySpec :=
     { name := pin.name, git := pin.git, rev := pin.rev }
   let deps : LeanEvalGenerator.Core.RootDependencies := {
+    solutions := request.solutionDependencies.getD #[]
     mathlib := spec request.mathlib
     extras := (request.dependencies.getD #[]).map
       (LeanEvalGenerator.Core.RootRequire.ofSpec ∘ spec)
@@ -239,7 +241,7 @@ private def ensureKnownFields (label : String) (allowed : Array String)
 
 private def validateJsonShape (value : Json) : Except String Unit := do
   ensureKnownFields "request" #[
-    "schemaVersion", "contextRoot", "leanToolchain", "mathlib", "dependencies", "templates",
+    "schemaVersion", "contextRoot", "leanToolchain", "mathlib", "dependencies", "solutionDependencies", "templates",
     "problems"
   ] value
   let mathlib ← value.getObjVal? "mathlib"
@@ -247,6 +249,9 @@ private def validateJsonShape (value : Json) : Except String Unit := do
   if let .ok deps := value.getObjVal? "dependencies" then
     for dep in ← deps.getArr? do
       ensureKnownFields "dependency" #["name", "git", "rev"] dep
+  if let .ok deps := value.getObjVal? "solutionDependencies" then
+    for dep in ← deps.getArr? do
+      ensureKnownFields "solution dependency" #["name", "moduleRoots"] dep
   let templates ← value.getObjVal? "templates"
   ensureKnownFields "templates" #["workspaceTest"] templates
   let problems ← (← value.getObjVal? "problems").getArr?
