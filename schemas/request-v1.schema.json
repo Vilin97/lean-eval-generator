@@ -21,21 +21,6 @@
       "type": "array",
       "items": { "$ref": "#/$defs/extraDependency" }
     },
-    "solutionDependencies": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["name", "moduleRoots"],
-        "properties": {
-          "name": { "type": "string", "minLength": 1 },
-          "moduleRoots": {
-            "type": "array", "minItems": 1,
-            "items": { "type": "string", "minLength": 1 }
-          }
-        }
-      }
-    },
     "templates": {
       "type": "object",
       "additionalProperties": false,

@@ -99,36 +99,22 @@ private def rootRequireOfTable (t : Table) : Except String RootRequire := do
     | other, _ => unsupported := unsupported.push s!"`{other}`"
   return { name, git, rev, unsupportedFields := unsupported }
 
-/-- A package available to solutions, with library roots forbidden in statements. -/
+/-- A pinned package available to solutions but forbidden in statement imports. -/
 structure SolutionDependency where
   name : String
   moduleRoots : Array String
   deriving FromJson, Inhabited
 
-/-- Optional consumer policy. Pins remain in the root lakefile. -/
+/-- Optional consumer policy; dependency pins remain in the root lakefile. -/
 def loadSolutionDependencies (root : System.FilePath) : IO (Array SolutionDependency) := do
   let path := root / "solution-dependencies.json"
   if !(← path.pathExists) then return #[]
-  let parsed := (Json.parse (← IO.FS.readFile path)).bind fromJson?
-  IO.ofExcept <| parsed.mapError (fun err => s!"{path}: {err}")
-
-/-- Check external imports after following repository-local helpers. -/
-def checkSolutionImports (solutions : Array SolutionDependency) (imports : Array String) :
-    Except String Unit := do
-  for dep in solutions do
-    if dep.name.isEmpty || dep.moduleRoots.isEmpty || dep.moduleRoots.any String.isEmpty then
-      throw "Solution dependencies require a name and non-empty moduleRoots"
-    for imported in imports do
-      if dep.moduleRoots.any (fun root =>
-          (parseModuleName root).isPrefixOf (parseModuleName imported)) then
-        throw s!"Problem statements may not import solution-only module '{imported}' \
-          (package '{dep.name}')"
+  IO.ofExcept <| (Json.parse (← IO.FS.readFile path)).bind fromJson?
 
 /-- The dependencies a generated workspace may require, read from the root
 lakefile: the mandatory `mathlib` pin, plus every other root `[[require]]` in
 root lakefile order. An extra require is only emitted into a workspace whose
-problem imports one of its modules, or is explicitly enabled for solutions;
-see `workspaceRequires`. -/
+problem imports one of its modules, or it is enabled for solutions; see `workspaceRequires`. -/
 structure RootDependencies where
   mathlib : DependencySpec
   extras : Array RootRequire := #[]
@@ -194,8 +180,7 @@ private def loadRootDependenciesCore (root : System.FilePath) (strictMathlib : B
 `mathlib` require, which must be a plain git require with non-empty `git` and
 `rev` and no other fields, and every other require as written. Other requires
 are not validated here; a problem that selects one fails if it cannot be
-reproduced (see `RootRequire.toSpec`). Also read the optional solution-only
-policy; the legacy Mathlib-only loader does not depend on that file. -/
+reproduced (see `RootRequire.toSpec`). -/
 def loadRootDependencies (root : System.FilePath) : IO RootDependencies := do
   return { (← loadRootDependenciesCore root (strictMathlib := true)) with
     solutions := ← loadSolutionDependencies root }
@@ -1387,11 +1372,10 @@ been followed): each extra root require whose `name` equals the first
 component of some imported module, in root lakefile order, followed by
 `mathlib`. For example `import TauCeti.Foo.Bar` selects the require named
 `TauCeti`. Tooling requires in the root lakefile are never selected, because
-no problem imports them. Explicit solution dependencies are also emitted, but
-their module roots are rejected in problem imports. Fails if a selected require
-cannot be reproduced.
+no problem imports them. Solution dependencies are always included, but their
+module roots are forbidden in statements. Fails if a selected require cannot be reproduced.
 
-Known limitation for statement imports: a library root differing from its package name
+Known limitation: a package whose library root differs from its package name
 (say package `foo-bar` providing modules `FooBar.*`) is not matched. Its
 workspace then lacks the require, and the workspace build fails loudly on the
 missing import rather than silently changing the statement.
@@ -1402,10 +1386,15 @@ putting an extra package after Mathlib would make `lake update` pick up that
 package's (typically older) pins instead of Mathlib's. -/
 def workspaceRequires (deps : RootDependencies) (imports : Array String) :
     Except String (Array DependencySpec) := do
-  checkSolutionImports deps.solutions imports
   for dep in deps.solutions do
     unless (deps.extras.filter (·.name == dep.name)).size == 1 do
       throw s!"Solution dependency '{dep.name}' must name exactly one non-mathlib root require"
+    if dep.moduleRoots.isEmpty || dep.moduleRoots.any String.isEmpty then
+      throw s!"Solution dependency '{dep.name}' requires non-empty moduleRoots"
+    for imported in imports do
+      if dep.moduleRoots.any (fun root =>
+          (parseModuleName root).isPrefixOf (parseModuleName imported)) then
+        throw s!"Problem statements may not import solution-only module '{imported}'"
   let roots : Std.HashSet String := imports.foldl (init := {}) fun acc m =>
     match (splitNameComponents m)[0]? with
     | some r => acc.insert r

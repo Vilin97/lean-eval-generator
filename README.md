@@ -35,7 +35,7 @@ problem may also import modules from another package. The library API reads
 the candidate packages from the consumer's root `lakefile.toml`
 (`loadRootDependencies`); a CLI request lists them in the optional
 `dependencies` array of `{name, git, rev}` pins, and omitting that array means
-Mathlib only. By default, a candidate is required by a workspace when its `name`
+Mathlib only. A candidate is required by a workspace exactly when its `name`
 equals the first component of a module the problem imports, after following
 repo-local imports: `import TauCeti.Foo.Bar` selects the package named
 `TauCeti`. Tooling packages are therefore never required, because no problem
@@ -46,25 +46,18 @@ Mathlib's pins.
 A selected root require must be a plain git require with a non-empty `git` and
 `rev`; `subDir`, `scope`, `options`, a table-valued `git` or any other field is
 an error, since the workspace would not reproduce it. Unselected requires are
-not checked. For statement imports, a package whose library root differs from
-its package name is not matched; the workspace then fails on the missing import
+not checked. A package whose library root differs from its package name is not
+matched; the generated workspace then fails to build on the missing import
 rather than silently changing the statement.
 
-Transitive dependencies are not pinned in the workspace lakefile. A consumer
+The emitted requires are pruned to what the problem imports, but their
+transitive dependencies are not pinned in the workspace lakefile. A consumer
 that builds a generated workspace should install the root `lake-manifest.json`
 into it (as lean-eval's CI does) rather than running `lake update`, so that
 every package resolves to the same revision as in the root workspace.
 
-Solution-only packages use the same resolver, but are included even when the
-problem does not import them. Enable them in the consumer's optional
-`solution-dependencies.json`, using package names pinned in its root lakefile:
-
-```json
-[{"name": "proof-library", "moduleRoots": ["ProofLibrary"]}]
-```
-
-The package name and module roots may differ, as with `lean-pool` and `LeanPool`.
-Generation rejects the listed module roots in statements, including imports
-through local helpers. TauCeti's existing statement-import behavior is unchanged.
-JSON CLI requests use the same array in `solutionDependencies`, with
-the pins supplied in `dependencies`. Omitting the policy preserves existing output.
+To enable a package for solutions only, add `solution-dependencies.json` to the
+consumer root (`contextRoot` for JSON requests), for example:
+`[{"name": "lean-pool", "moduleRoots": ["LeanPool", "Challenge", "Solution"]}]`.
+The package must be pinned in the existing dependencies. It is included in every
+workspace; imports of its listed module roots in statements or local helpers are rejected.
